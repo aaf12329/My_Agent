@@ -25,7 +25,8 @@ Deepseek_port_new/
 │   ├── tools.py            # 启动自检 + Prompt/记忆/聊天 增删改查 + 通用I/O + 输入(Code_Send 文件投喂)
 │   ├── Model_Function.py   # 模型调用层：DeepSeek / GLM / GPT 三家适配
 │   ├── embedding.py        # 向量化 + 记忆语义检索（bge-small-zh, CPU 可跑）
-│   └── Compress_mudel.py   # 记忆压缩（超阈值自动摘要并按条目格式写回）
+│   ├── Compress_mudel.py   # 记忆压缩（超阈值自动摘要并按条目格式写回）
+│   └── Agent_tool.py       # Agent 工具适配层：TOOLS 声明 + 路径沙箱 + 审批 + 分发执行
 ├── Prompt/                 # Prompt 池（全 .md）
 │   ├── base.md             # 通用 prompt：身份 / 硬规则 / 输出约定
 │   └── domains/            # 特化池，按需叠加在 base 之后
@@ -62,6 +63,7 @@ Deepseek_port_new/
 | embedding | `embed_build() / embed_search(query, top_k)` | 全库建索引 / 语义检索（索引过期自动重建） |
 | embedding | `classify_input(query)` | 领域路由：与各领域 .md 全文比相似度，低于阈值返回 None |
 | Compress_mudel | `Memory_Scale_detect() / Compress_control()` | 超阈值检测 / 执行压缩 |
+| Agent_tool | `TOOLS / execute_tool(name, args_json, approval)` | 模型工具声明（search_memory / find_memory / remember / read_file / compress_memory）/ 分发执行（路径沙箱 + 危险审批 + 异常转文本） |
 
 **模型层返回契约**：所有调用统一返回 dict
 `{"content": 回答文本, "reasoning": 思考过程, "usage": token账单(含缓存命中率)}`
@@ -89,6 +91,7 @@ myvenv\Scripts\python.exe -m tool.tools             :: 功能库全量自测
 myvenv\Scripts\python.exe -m tool.embedding         :: 语义检索自测
 myvenv\Scripts\python.exe -m tool.Model_Function    :: 三家连通自测（需 .env）
 myvenv\Scripts\python.exe -m tool.Compress_mudel    :: 压缩链路自测
+myvenv\Scripts\python.exe -m tool.Agent_tool        :: 工具层自测(沙箱/审批/分发)
 ```
 
 ## 日常使用
@@ -124,7 +127,8 @@ myvenv\Scripts\python.exe -m tool.Compress_mudel    :: 压缩链路自测
 - [x] `chat_to_messages()` / `context_build()`（多轮与总装的库层就绪）
 - [x] `classify_input()` 领域自动路由（本地分类，自动挂载特化 prompt）
 - [x] main.py 对话循环 + GUI 图形界面（多轮对话上线）
-- [ ] Agent 化三件套：TOOLS 声明 / tool_calls 解析 / 工具执行循环（含审批与路径沙箱）
+- [x] Agent 工具适配层：TOOLS 声明 / 路径沙箱 / 危险操作审批 / 分发执行（tool/Agent_tool.py，5 个工具）
+- [ ] Agent 循环：tool_calls 解析 + 执行→回灌→再决策（带 max_steps 保险丝），把决策权交给模型
 - [ ] ~~`classify_input()` 领域自动路由~~（已完成，见 embedding.py）
 
 ---
@@ -157,6 +161,7 @@ Deepseek_port_new/
 │   ├── Model_Function.py   # Model layer: DeepSeek / GLM / GPT adapters
 │   ├── embedding.py        # Vectorization + semantic memory retrieval (bge-small-zh, CPU-only)
 │   └── Compress_mudel.py   # Memory compression (auto-summarize past threshold, written back as entries)
+│   └── Agent_tool.py       # Agent tool adapter: TOOLS declarations + path sandbox + approval + dispatcher
 ├── Prompt/                 # Prompt pool (all .md)
 │   ├── base.md             # General prompt: identity / hard rules / output conventions
 │   └── domains/            # Specialized modules, stacked after base on demand
@@ -193,6 +198,7 @@ Deepseek_port_new/
 | embedding | `embed_build() / embed_search(query, top_k)` | Build index / semantic retrieval (stale index auto-rebuilt) |
 | embedding | `classify_input(query)` | Domain routing: similarity against each domain .md body; returns None below threshold |
 | Compress_mudel | `Memory_Scale_detect() / Compress_control()` | Threshold check / run compression |
+| Agent_tool | `TOOLS / execute_tool(name, args_json, approval)` | Tool declarations for the model (search_memory / find_memory / remember / read_file / compress_memory) / dispatcher (path sandbox + risky approval + errors-as-guidance) |
 
 **Model layer return contract**: every call returns a dict —
 `{"content": reply text, "reasoning": thinking process, "usage": token bill (incl. cache hit rate)}`
@@ -220,6 +226,7 @@ myvenv\Scripts\python.exe -m tool.tools
 myvenv\Scripts\python.exe -m tool.embedding
 myvenv\Scripts\python.exe -m tool.Model_Function    :: requires .env
 myvenv\Scripts\python.exe -m tool.Compress_mudel
+myvenv\Scripts\python.exe -m tool.Agent_tool        :: tool-layer self-test (sandbox / approval / dispatch)
 ```
 
 ## Daily usage
@@ -255,4 +262,5 @@ myvenv\Scripts\python.exe -m tool.Compress_mudel
 - [x] `chat_to_messages()` / `context_build()` (library layer ready for multi-turn and assembly)
 - [x] `classify_input()` domain routing (local classifier, auto-mount domain modules)
 - [x] main.py conversation loop + GUI (multi-turn chat is live)
-- [ ] Agent trio: TOOLS declarations / tool_calls parsing / tool-execution loop (with approval & path sandbox)
+- [x] Agent tool adapter: TOOLS declarations / path sandbox / risky-operation approval / dispatcher (tool/Agent_tool.py, 5 tools)
+- [ ] Agent loop: tool_calls parsing + execute→feed-back→re-decide (with max_steps fuse) — handing decision power to the model
