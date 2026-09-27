@@ -17,7 +17,7 @@
 ```
 Deepseek_port_new/
 ├── main.py                 # 唯一入口：控制台对话循环
-├── GUI.py                  # 图形界面（tkinter，后台线程调模型，布局参考旧版）
+├── GUI.py                  # 图形界面（左右气泡聊天风：用户蓝底靠右/AI灰底靠左，后台线程调模型）
 ├── GUI_Engage.bat          # 双击启动图形版
 ├── tool/                   # 功能模块包
 │   ├── __init__.py
@@ -148,7 +148,7 @@ Goal: evolve from a "chatbot" into a personal Agent with a **prompt pool + memor
 ```
 Deepseek_port_new/
 ├── main.py                 # Single entry: console conversation loop
-├── GUI.py                  # Tkinter GUI (model runs in a background thread, layout from the old edition)
+├── GUI.py                  # Chat-bubble GUI (user blue right / AI gray left, model in a background thread)
 ├── GUI_Engage.bat          # Double-click launcher for the GUI
 ├── tool/                   # Feature package
 │   ├── __init__.py
