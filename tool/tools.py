@@ -2,8 +2,9 @@
 tools.py —— 工具函数集
 
 分工规范:
-- 路径一律从 Store 拿(tool/Store.py,纯地址簿),本文件不做任何 os.path.join 拼路径
+- 路径一律从 Store 拿(tool/Store.py,纯地址簿),项目内文件不做 os.path.join 拼路径
 - 本文件负责:启动自检 + Prompt池/记忆库/聊天记录 的增删改查 + 通用读写 + 输入
+- 磁盘 I/O 统一走 file_read_write(文本)和 _read_json/_write_json(结构化),不开第三个口子
 
 数据格式约定:
 - 记忆库 memory.md:每条一行 "- [时间] 内容",人可直接手改,程序只认这种行
@@ -31,10 +32,13 @@ tools.py —— 工具函数集
 │   ├─ chat_update(i, text)      改:按序号
 │   ├─ chat_delete(i)            删:按序号
 │   └─ chat_clear()              清空(慎用)
-├─ 通用读写(兼容保留:Model_Function 还在调,适配后可下线)
-│   └─ file_read_write(path, mode, role, content)
-└─ 输入
-    └─ U_Input()                 读一行输入,exit() 退出,返回 user_input
+├─ 通用读写
+│   └─ file_read_write(path, mode, content)   磁盘I/O唯一入口:文本读写,自带编码回退
+├─ 输入
+│   ├─ U_Input()                 读输入,exit() 退出,Code_Send: 触发文件投喂,返回 user_input
+│   └─ _Code_Send(user_input)    内部:文件投喂分支(白名单/5MB/类型分发/1.5MB 拦截)
+└─ 内部工具
+    ├─ _write_memory_entries / _read_json / _write_json / _check_index
 
 已退役(随多角色架构进 封存/):Name_list_operation、U_Input 的角色管理命令分支、
 file_detect 的逐角色建文件与 Deepseek_Blank 现场生成
@@ -42,7 +46,11 @@ file_detect 的逐角色建文件与 Deepseek_Blank 现场生成
 import os
 import sys
 import json
+import base64                 #Code_Send 二进制文件转 base64
 from datetime import datetime
+
+import pandas as pd                 #Code_Send 读 xlsx
+from docx import Document           #Code_Send 读 docx
 
 from .Store import Store
 
@@ -66,8 +74,7 @@ def file_detect():
         if os.path.exists(file_path):
             print(f" {file_path} 存在")
         else:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(default)
+            file_read_write(file_path, "write", content=default)
             print(f" {file_path} 不存在,已建立")
 
     if not os.path.exists(Store.ENV_FILE):
@@ -83,7 +90,7 @@ def prompt_list_domains():
 
 def prompt_read_base():
     """查:读通用 prompt"""
-    return _read_text(Store.BASE_PROMPT)
+    return file_read_write(Store.BASE_PROMPT, "read")
 
 
 def prompt_read_domain(domain):
@@ -91,7 +98,7 @@ def prompt_read_domain(domain):
     path = Store.prompt_domain_path(domain)
     if not os.path.exists(path):
         return ""
-    return _read_text(path)
+    return file_read_write(path, "read")
 
 
 def prompt_write(domain, content):
@@ -100,8 +107,7 @@ def prompt_write(domain, content):
         print("[tools] prompt_write 失败:领域名不能为空")
         return False
     path = Store.prompt_domain_path(str(domain).strip())
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
+    file_read_write(path, "write", content=content)
     print(f"[tools] 已写入 prompt: {path}")
     return True
 
@@ -136,15 +142,14 @@ def memory_add(content):
         print("[tools] memory_add 失败:内容不能为空")
         return False
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(Store.MEMORY_FILE, "a", encoding="utf-8") as f:
-        f.write(f"- [{stamp}] {str(content).strip()}\n")
+    file_read_write(Store.MEMORY_FILE, "append", content=f"- [{stamp}] {str(content).strip()}\n")
     return True
 
 
 def memory_read(keyword=None):
     """查:读全部记忆,可按关键词过滤。返回 [(序号,时间,内容),...] 序号从1开始"""
     entries = []
-    for line in _read_text(Store.MEMORY_FILE).splitlines():
+    for line in file_read_write(Store.MEMORY_FILE, "read").splitlines():
         line = line.strip()
         if not line.startswith("- [") or "]" not in line:
             continue  # 跳过标题/空行/人手写的其他内容
@@ -181,10 +186,8 @@ def memory_delete(index):
 
 def _write_memory_entries(entries):
     """内部:把条目列表写回 memory.md(保留文件头)"""
-    with open(Store.MEMORY_FILE, "w", encoding="utf-8") as f:
-        f.write("# 长期记忆\n\n")
-        for _, stamp, content in entries:
-            f.write(f"- [{stamp}] {content}\n")
+    text = "# 长期记忆\n\n" + "".join(f"- [{stamp}] {content}\n" for _, stamp, content in entries)
+    file_read_write(Store.MEMORY_FILE, "write", content=text)
 
 
 # ==================== 聊天记录 增删改查 ====================
@@ -237,54 +240,107 @@ def chat_clear():
     return True
 
 
-# ==================== 通用读写(兼容保留,Model_Function 还在调) ====================
-def file_read_write(file_path, mode, role=None, content=None):
-    """通用读写:json 统一 list 格式(修复旧版 {} 与 append 打架的问题);md/txt 纯文本"""
-    if mode == "write":
-        if file_path.endswith(".json"):
-            if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                data = []
-            else:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            if not isinstance(data, list):   # 旧版自检曾写成 {},这里兜底成 list
-                print(f"[tools] 警告:{file_path} 不是 list 格式,已重置为新列表")
-                data = []
-            data.append({
-                "role": role,
-                "content": content,
-                "time": f"{datetime.now()}"
-            })
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        else:
-            with open(file_path, "a", encoding="utf-8") as f:
-                f.write(f"{datetime.now()}  {role}:{content}\n")
-    elif mode == "read":
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
-    else:
-        raise ValueError("mode error: 请使用'read'或'write'")
+# ==================== 通用读写 ====================
+def file_read_write(file_path, mode, content=None):
+    """磁盘 I/O 唯一入口(重构版):文本读写,自带编码回退
+
+    mode='read'   读文本,编码自动回退 utf-8 → gbk → gb2312 → latin-1
+    mode='write'  覆盖写
+    mode='append' 追加写
+    注意:json 结构化数据(聊天记录)不走这里,走 _read_json/_write_json
+    """
+    if mode == "read":
+        for enc in ("utf-8", "gbk", "gb2312", "latin-1"):
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    text = f.read()
+                if enc != "utf-8":
+                    print(f"[tools] 文件 {file_path} 不是 utf-8,已用 {enc} 解码")
+                return text
+            except UnicodeDecodeError:
+                continue
+        print(f"[tools] 无法解码文件 {file_path}")
+        return ""
+    if mode in ("write", "append"):
+        with open(file_path, "w" if mode == "write" else "a", encoding="utf-8") as f:
+            f.write(f"{content}")
+        return True
+    raise ValueError("mode error: 请使用'read'/'write'/'append'")
 
 
 # ==================== 输入 ====================
 def U_Input():
-    """读一行输入;exit() 退出程序;返回 user_input(旧版角色管理分支已随多角色退役)"""
+    """读一行输入;exit() 退出;Code_Send: 前缀触发文件投喂;返回最终 user_input"""
     user_input = input(f"{datetime.now()}  用户输入:")
     if user_input == "exit()":
         print("程序正常退出")
         sys.exit(0)
+    if user_input.startswith("Code_Send:"):
+        user_input = _Code_Send(user_input)
+    return user_input
+
+
+def _Code_Send(user_input):
+    """内部:Code_Send 文件投喂(实现参考旧版 ds.py 的 U_Input,变量名保留)
+
+    流程:输路径 → 存在性 → 白名单 → 5MB 限制 → 按类型读取(文本/Office/二进制) → 拼接 → 1.5MB 拦截
+    """
+    local = input("\n文件路径(带后缀):")
+    # 1. 文件存在性
+    if not os.path.isfile(local):
+        print("文件不存在")
+        return user_input
+    # 2. 扩展名白名单
+    ALLOWED_EXTENSIONS = (".txt", ".md", ".csv", ".py", ".html", ".xml", ".log", ".yaml",
+                          ".json", ".jpg", ".png", ".gif", ".mp4", ".mp3", ".pdf", ".zip",
+                          ".exe", ".xlsx", ".docx")
+    if not local.endswith(ALLOWED_EXTENSIONS):
+        print("不支持的文件类型")
+        return user_input
+    # 3. 文件大小(防内存爆炸)
+    file_size = os.path.getsize(local)
+    if file_size > 5 * 1024 * 1024:   # 5MB
+        print("文件超过 5MB")
+        return "Send_oversize"
+    # 4. 按类型读取
+    data = None
+    if local.endswith((".txt", ".md", ".csv", ".py", ".html", ".xml", ".log", ".yaml", ".json")):
+        data = file_read_write(local, "read")      # 编码回退在 file_read_write 里
+        print(f"\n已读取文本文件,共 {len(data)} 字符")
+    elif local.endswith((".xlsx", ".docx")):
+        try:
+            if local.endswith(".docx"):
+                doc = Document(local)
+                data = "\n".join([p.text for p in doc.paragraphs])
+            elif local.endswith(".xlsx"):
+                df = pd.read_excel(local)
+                data = df.to_string()
+            print(f"成功读取Office文档,共 {len(data)} 字符")
+        except ImportError as e:
+            print(f"缺少依赖包: {e}")
+            return user_input
+        except Exception as e:
+            print(f"读取Office文档失败: {e}")
+            return user_input
+    elif local.endswith((".jpg", ".png", ".gif", ".mp4", ".mp3", ".pdf", ".zip", ".exe")):
+        # 注意:文本模型看不了图/二进制,base64 只会白白占上下文(旧版行为,原样保留)
+        with open(local, "rb") as f:
+            data = base64.b64encode(f.read()).decode()
+        print("\n成功读取二进制文件,转为base64编码")
+    # 5. 拼接到输入
+    if data is not None:
+        user_input = user_input + "\n" + data
+    else:
+        print("文件读取失败")
+        return user_input
+    # 6. 最终输入大小拦截
+    if len(user_input.encode('utf-8')) / (1024 * 1024) >= 1.5:
+        print("输入过大，被拦截请重新输入")
+        return "Send_oversize"
     return user_input
 
 
 # ==================== 内部工具 ====================
-def _read_text(path):
-    if not os.path.exists(path):
-        return ""
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
-
-
 def _read_json():
     if not os.path.exists(Store.CHAT_FILE) or os.path.getsize(Store.CHAT_FILE) == 0:
         return []
@@ -313,6 +369,7 @@ def _check_index(index, total, name):
 # ==================== 自测(直接运行本文件才会执行,不影响被 import) ====================
 if __name__ == "__main__":
     import tempfile
+    import builtins
     # 自测时把 Store 的路径指到临时目录,绝不碰真实数据
     tmp = tempfile.mkdtemp()
     Store.PROMPT_DIR = os.path.join(tmp, "Prompt")
@@ -322,6 +379,16 @@ if __name__ == "__main__":
     Store.CHAT_FILE = os.path.join(tmp, "chat.json")
     Store.ENV_FILE = os.path.join(tmp, ".env")
     file_detect()
+
+    # file_read_write 重构版:写 / 读 / 追加 / 编码回退
+    p_md = os.path.join(tmp, "misc.md")
+    file_read_write(p_md, "write", content="第一行")
+    file_read_write(p_md, "append", content="\n第二行")
+    print("读回:", repr(file_read_write(p_md, "read")))
+    p_gbk = os.path.join(tmp, "gbk.txt")
+    with open(p_gbk, "w", encoding="gbk") as f:
+        f.write("我是GBK编码的中文")
+    print("GBK回退:", file_read_write(p_gbk, "read"))
 
     # prompt 增删改查
     prompt_write("code", "代码领域专用规则")
@@ -348,7 +415,10 @@ if __name__ == "__main__":
     chat_delete(2)
     print("最后1条:", chat_read(last_n=1))
 
-    # 通用读写兼容层
-    file_read_write(os.path.join(tmp, "misc.md"), "write", role="user", content="兼容层测试")
-    print("兼容层读回:", file_read_write(os.path.join(tmp, "misc.md"), "read"))
+    # Code_Send 全流程(用假的 input 走一遍,不用手动敲)
+    inputs = iter(["Code_Send:", p_md])
+    builtins.input = lambda prompt="": next(inputs)
+    result = U_Input()
+    print("Code_Send 结果含文件内容:", "第二行" in result)
+
     print("自测全部通过")

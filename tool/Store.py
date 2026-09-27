@@ -23,6 +23,8 @@ class Store:
     # 记忆库与聊天记录(物理分开)
     MEMORY_DIR = os.path.join(BASE_DIR, "Memories")
     MEMORY_FILE = os.path.join(MEMORY_DIR, "memory.md")        # 记忆库,.md
+    MEMORY_VECTOR_FILE = os.path.join(MEMORY_DIR, "memory_vectors.npy")  # 向量矩阵(embedding建库产物)
+    MEMORY_INDEX_FILE = os.path.join(MEMORY_DIR, "memory_index.json")    # 索引元数据(与npy按行对齐)
 
     CHAT_DIR = os.path.join(BASE_DIR, "ChatHistory")
     CHAT_FILE = os.path.join(CHAT_DIR, "chat_history.json")    # 聊天记录,.json
