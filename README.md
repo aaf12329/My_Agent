@@ -91,6 +91,20 @@ myvenv\Scripts\python.exe -m tool.Model_Function    :: 三家连通自测（需 
 myvenv\Scripts\python.exe -m tool.Compress_mudel    :: 压缩链路自测
 ```
 
+## 日常使用
+
+**加一条记忆**：用记事本打开 `Memories/memory.md`，新起一行写 `- [2026-09-27 21:00] 事实内容`（一条一行，格式错了程序会自动跳过）；或在代码里调 `tools.memory_add("事实")`。模型自主存记忆属于 Agent 化阶段的工具。
+
+**加一个新领域**：在 `Prompt/domains/` 下新建 `xxx.md`，把对该领域的描述写进去——**文件全文就是它的语义身份**，路由按内容匹配，存档即生效，无需改代码。
+
+**投喂文件**（仅控制台版）：输入以 `Code_Send:` 开头，回车后按提示输路径。支持 19 种格式：文本（带编码回退）/ xlsx / docx / 二进制转 base64；单文件 5MB、拼接后 1.5MB 双重限制。
+
+**切换模型**：把 `main.py` 的 `Control()` 或 `GUI.py` 的 `_worker()` 里的 `Deepseek_Core(...)` 换成 `GLM_Core(...)` 或 `GPT_Core(...)` 即可，返回契约完全一致。
+
+**看 token 账单**：每轮对话结束打印 `[usage] 输入N(缓存命中M,百分比) 输出N 共N`——缓存命中率就是你"前缀稳定"设计的成绩单，一直接近 0% 就该回头查上下文拼装。
+
+**压缩**：全自动，无需手动——`memory.md` 超 1.5MB 时下一轮对话触发摘要并按条目格式写回。
+
 ## 设计要点
 
 - **解耦规矩**：tool/ 内模块之间**不互相调用**，只有 main 指挥；Store 只是地址簿（路径常量）。记忆条目格式在 tools 和 embedding 两处同步维护
@@ -207,6 +221,20 @@ myvenv\Scripts\python.exe -m tool.embedding
 myvenv\Scripts\python.exe -m tool.Model_Function    :: requires .env
 myvenv\Scripts\python.exe -m tool.Compress_mudel
 ```
+
+## Daily usage
+
+**Add a memory**: open `Memories/memory.md` in any editor and add a line `- [2026-09-27 21:00] some fact` (one per line; malformed lines are skipped automatically); or call `tools.memory_add("fact")` in code. Model-driven memory saving belongs to the agent phase.
+
+**Add a new domain**: create `Prompt/domains/xxx.md` and write your description of the domain in it — **the file body IS its semantic identity**; routing matches on the content, effective on save, zero code changes.
+
+**Feed a file** (console only): start your input with `Code_Send:`, press Enter, follow the path prompt. 19 formats supported: text (with encoding fallback) / xlsx / docx / binary as base64; dual limits of 5MB per file and 1.5MB after concatenation.
+
+**Switch models**: replace `Deepseek_Core(...)` with `GLM_Core(...)` or `GPT_Core(...)` in `main.py`'s `Control()` or `GUI.py`'s `_worker()` — the return contract is identical.
+
+**Read the token bill**: every turn prints `[usage] in:N(cached:M,pct) out:N total:N` — the cache hit percentage is the report card of the "stable prefix" design; if it stays near 0%, audit the context assembly.
+
+**Compression**: fully automatic — when `memory.md` exceeds 1.5MB, the next turn summarizes it and writes it back as entries.
 
 ## Design notes
 
