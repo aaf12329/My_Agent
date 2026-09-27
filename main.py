@@ -1,6 +1,6 @@
-import Model_Function
-import tools
-import Compress_mudel
+import tool.Model_Function as Model_Function
+import tool.tools as tools
+import tool.Compress_mudel as Compress_mudel
 
 import os
 import json
@@ -12,7 +12,7 @@ import base64
 from docx import Document
 import sys
 from dotenv import load_dotenv   #加载env文件
-import Compress_mudel         #手搓的py文件，记忆压缩模块
+import tool.Compress_mudel as Compress_mudel         #手搓的py文件，记忆压缩模块
 import pandas as pd
 
 """

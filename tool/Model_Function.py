@@ -1,7 +1,7 @@
 
 from openai import OpenAI
 #from zai import ZhipuAiClient
-import tools
+from . import tools
 
 import os
 import json
@@ -13,7 +13,7 @@ import base64
 from docx import Document
 import sys
 from dotenv import load_dotenv   #加载env文件
-import Compress_mudel         #手搓的py文件，记忆压缩模块
+from . import Compress_mudel         #手搓的py文件，记忆压缩模块
 import pandas as pd
 
 #路径区(start)

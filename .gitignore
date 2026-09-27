@@ -16,3 +16,20 @@ myvenv
 .DS_Store
 Thumbs.db
 
+# 运行时数据（聊天记录是过程日志，不入库）
+ChatHistory/*.json
+
+# 向量索引等二进制产物（记忆向量化后会生成）
+*.npy
+*.faiss
+
+# 模型/数据集缓存（若以后下载到项目内）
+models/
+hf_cache/
+
+# 测试与构建缓存
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
