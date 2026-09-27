@@ -1,104 +1,130 @@
+"""
+Model_Function.py —— 模型调用层(纯函数:文本进,文本出,不碰任何文件)
 
-from openai import OpenAI
-#from zai import ZhipuAiClient
-from . import tools
+解耦规范:
+- 本模块不 import tools / Store / Compress_mudel,需要什么文本由调用方(main)传进来
+- key 一律从 .env 读,严禁硬编码
+- 三个 Core 同构,想换厂商只换函数名
 
+函数结构:
+├─ Deepseek_Core(user_input, prompt, model, reasoning_effort, thinking)   DeepSeek 适配
+├─ GLM_Core(user_input, prompt, model, thinking)                          智谱 GLM 适配(OpenAI兼容端点)
+├─ GPT_Core(user_input, prompt, model, reasoning_effort)                  OpenAI GPT 适配
+└─ _stream_print(response)       内部共用:消费流式响应,边打印边收集,返回完整文本
+
+.env 需要的 key(用到谁配谁):
+    DEEPSEEK_API_KEY=sk-xxx
+    ZHIPU_API_KEY=xxx        (智谱,GLM)
+    OPENAI_API_KEY=sk-xxx    (GPT)
+
+已退役:Deepseek_Blank(旧自检生成角色prompt用)、role_dic(多角色配置)、
+       GLM_Core 的注释草稿(本版已实现)
+"""
 import os
-import json
-from datetime import datetime
+from dotenv import load_dotenv
 from openai import OpenAI
-import csv                          #搞csv的
-from openpyxl import load_workbook   #搞excel的
-import base64
-from docx import Document
-import sys
-from dotenv import load_dotenv   #加载env文件
-from . import Compress_mudel         #手搓的py文件，记忆压缩模块
-import pandas as pd
 
-#路径区(start)
-base_path = os.path.dirname(os.path.abspath(__file__))
-#路径区(stop)
-"""
-#GLM的文档暂时还没有看太明白过一段时间再做
-def GLM_Core(user_input):
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    client = ZhipuAiClient(api_key="YOUR_API_KEY")
-    response = client.chat.completions.create(
-            {
-    "model": "glm-5.3",
-    "thinking": { "type": "enabled" },
-    "reasoning_effort": "max"
-    },
-        #model 选项 glm-5.3 glm-5.3-flash
-        messages=[
-            {
-                "role": "system",
-                "content": "您是一个有用的AI助手。"
-            },
-            {
-                "role": "user",
-                "content": "您好，请介绍一下自己。"
-            }
-        ],
-        temperature=0.6
-        #(temperature你调得越高，模型越“放飞自我”；调得越低，模型越“照本宣科”)
-    )
-    print(response.choices[0].message.content)
-"""
-"""
-deepseek2.0(第四次调整架构)
-"""
 
-#deepseek白模用于在文件损失的时候去修复(仅限于prompt)
-def Deepseek_Blank(role):
+# ==================== DeepSeek 适配 ====================
+def Deepseek_Core(user_input, prompt="", model="deepseek-flash",
+                  reasoning_effort="high", thinking=True):
+    """DeepSeek 调用。prompt 为空则不带 system(纯对话)"""
+    load_dotenv()
     client = OpenAI(
         api_key=os.environ.get('DEEPSEEK_API_KEY'),
         base_url="https://api.deepseek.com")
 
-    response = client.chat.completions.create(
-        model="deepseek-v4-flash",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant"},
-            {"role": "user", "content": f"帮我生成{role}的prompt,300字左右要贴近角色"},
-        ],
-        stream=False,
-        reasoning_effort="high",
-        extra_body={"thinking": {"type": "enabled"}}
-    )
-    return response.choices[0].message.content
+    messages = []
+    if prompt:
+        messages.append({"role": "system", "content": prompt})
+    messages.append({"role": "user", "content": user_input})
 
-#Deepseek_Core 主调函数(在这个版本中prompt直接集成进入Core函数)
-def Deepseek_Core(user_input,role="Amiya"):
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        stream=True,
+        reasoning_effort=reasoning_effort,
+        extra_body={"thinking": {"type": "enabled" if thinking else "disabled"}}
+    )
+    return _stream_print(response)
+
+
+# ==================== 智谱 GLM 适配 ====================
+def GLM_Core(user_input, prompt="", model="glm-5.3", thinking=True):
+    """智谱 GLM 调用。走官方 OpenAI 兼容端点,不用额外装 zhipuai SDK"""
     load_dotenv()
-    
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    #角色prompt及其他设置
-    role_dic={
-    "Amiya":["deepseek-v4-flash-vision-exp","medium","disabled"],
-    "Kal_tsit":["deepseek-v4-pro","high","enabled"],
-    "Closure":["deepseek-v4-pro","high","enabled"]
-    }
+    client = OpenAI(
+        api_key=os.environ.get('ZHIPU_API_KEY'),
+        base_url="https://open.bigmodel.cn/api/paas/v4")
 
-    Prompt_path=os.path.join(base_path,"Prompt",f"{role}.md")
-    History_path=os.path.join(base_path,"AI_memory_SQL",f"{role}_memory.md")
+    messages = []
+    if prompt:
+        messages.append({"role": "system", "content": prompt})
+    messages.append({"role": "user", "content": user_input})
 
-    prompt=tools.file_read_write(Prompt_path,"read")
-    History=tools.file_read_write(Prompt_path,"read")
-
-    client = OpenAI(api_key=os.environ.get('DEEPSEEK_API_KEY'),base_url="https://api.deepseek.com")
     response = client.chat.completions.create(
-        model=role_dic[role][0],
-        messages=[{"role": "system", "content": prompt},{"role": "user", "content": user_input },],
-        stream=True,reasoning_effort=role_dic[role][1],
-        extra_body={"thinking": {"type": role_dic[role][2]}}
+        model=model,
+        messages=messages,
+        stream=True,
+        extra_body={"thinking": {"type": "enabled" if thinking else "disabled"}}
     )
-    collected=""
+    return _stream_print(response)
+
+
+# ==================== OpenAI GPT 适配 ====================
+def GPT_Core(user_input, prompt="", model="gpt-5", reasoning_effort=None):
+    """OpenAI GPT 调用。reasoning_effort 不传就不带这个参数(非推理模型会报错)"""
+    load_dotenv()
+    client = OpenAI(
+        api_key=os.environ.get('OPENAI_API_KEY'),
+        base_url="https://api.openai.com/v1")
+
+    messages = []
+    if prompt:
+        messages.append({"role": "system", "content": prompt})
+    messages.append({"role": "user", "content": user_input})
+
+    extra = {}
+    if reasoning_effort:
+        extra["reasoning_effort"] = reasoning_effort
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        stream=True,
+        **extra
+    )
+    return _stream_print(response)
+
+
+# ==================== 内部共用 ====================
+def _stream_print(response):
+    """内部共用:消费流式响应,边打印边收集,返回完整文本(三家格式一致,一份代码)"""
+    collected = ""
     print("Ai_response:")
     for chunk in response:
-        delta=chunk.choices[0].delta.content
-        if delta:
-            collected+=delta
-            print(delta,end="")
+        if not chunk.choices:            # 最后一个 chunk 只带 usage,choices 是空的
+            continue
+        delta = chunk.choices[0].delta
+        if delta and delta.content:
+            collected += delta.content
+            print(delta.content, end="")
     print("\n")
     return collected
+
+
+# ==================== 自测(直接运行本文件才会执行) ====================
+if __name__ == "__main__":
+    load_dotenv()
+    if os.environ.get('DEEPSEEK_API_KEY'):
+        Deepseek_Core("用一句话介绍你自己")
+    else:
+        print("[自测] .env 里没有 DEEPSEEK_API_KEY,跳过 DeepSeek")
+    if os.environ.get('ZHIPU_API_KEY'):
+        GLM_Core("用一句话介绍你自己", prompt="回答必须带一个表情符号")
+    else:
+        print("[自测] .env 里没有 ZHIPU_API_KEY,跳过 GLM")
+    if os.environ.get('OPENAI_API_KEY'):
+        GPT_Core("用一句话介绍你自己")
+    else:
+        print("[自测] .env 里没有 OPENAI_API_KEY,跳过 GPT")
