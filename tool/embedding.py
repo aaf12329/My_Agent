@@ -15,6 +15,7 @@ embedding.py —— 文本转向量 + 记忆库语义检索
 ├─ text_to_vector(text)          单句 → 归一化向量(512,)
 ├─ embed_build()                 全量建库:读记忆条目 → 批量编码 → 存 .npy + json,返回条数
 ├─ embed_search(query, top_k)    语义检索:点积取最近 top_k,索引过期自动重建
+├─ classify_input(query)         领域路由:query vs 各领域.md全文,低于阈值返回 None
 ├─ _read_entries()               内部:解析 memory.md 条目(格式与 tools 同步)
 ├─ _index_stale()                内部:索引是否需要重建
 └─ _get_model()                  内部:懒加载
@@ -125,6 +126,35 @@ def embed_search(query, top_k=5):
     return [(float(sims[i]), index[i]["time"], index[i]["content"]) for i in order]
 
 
+# ==================== 领域路由 ====================
+ROUTING_MIN_SCORE = 0.35   # 低于此分不挂领域,只用通用池(经验值,实测后再调)
+
+
+def classify_input(query):
+    """领域路由:query 和各领域 .md 的全文比相似度,返回 (领域名, 相似度) 或 None
+
+    领域 .md 的全文就是该领域的语义身份——你在文件里写什么,它就按什么路由
+    自带列目录和读文件,不 import tools;相似度低于 ROUTING_MIN_SCORE 返回 None(只用通用池)
+    """
+    if not os.path.exists(Store.DOMAIN_DIR):
+        return None
+    domains = [name[:-3] for name in os.listdir(Store.DOMAIN_DIR) if name.endswith(".md")]
+    if not domains:
+        return None
+    descs = []
+    for name in domains:
+        path = os.path.join(Store.DOMAIN_DIR, f"{name}.md")
+        with open(path, "r", encoding="utf-8") as f:
+            descs.append(f.read())
+    q = text_to_vector(query)
+    dvecs = _get_model().encode(descs, normalize_embeddings=True, show_progress_bar=False)
+    sims = np.asarray(dvecs) @ q
+    best = int(np.argmax(sims))
+    if sims[best] < ROUTING_MIN_SCORE:
+        return None
+    return (domains[best], float(sims[best]))
+
+
 # ==================== 自测(直接运行本文件才会执行) ====================
 if __name__ == "__main__":
     import tempfile
@@ -151,4 +181,15 @@ if __name__ == "__main__":
     with open(Store.MEMORY_FILE, "a", encoding="utf-8") as f:
         f.write("- [2026-09-27 10:03] 用户在学 STM32 单片机\n")
     print("追加后自动重建,检索『单片机开发板』:", embed_search("单片机开发板", top_k=1)[0][2])
+
+    # 领域路由
+    Store.DOMAIN_DIR = os.path.join(tmp, "domains")
+    os.makedirs(Store.DOMAIN_DIR, exist_ok=True)
+    with open(os.path.join(Store.DOMAIN_DIR, "code.md"), "w", encoding="utf-8") as f:
+        f.write("编程、代码、调试、报错、程序开发")
+    with open(os.path.join(Store.DOMAIN_DIR, "math.md"), "w", encoding="utf-8") as f:
+        f.write("数学、公式、方程、计算、证明")
+    print("路由『帮我调试python报错』:", classify_input("帮我调试python报错"))
+    print("路由『解一个方程』:", classify_input("解一个方程"))
+    print("路由『今天天气不错』:", classify_input("今天天气不错"), "(期望 None 或低分)")
     print("自测完成")

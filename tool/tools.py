@@ -20,7 +20,8 @@ tools.py —— 工具函数集
 │   ├─ prompt_read_domain(d)     查:读某领域,不存在返回 ""
 │   ├─ prompt_write(d, text)     增/改:写领域 prompt,存在即覆盖
 │   ├─ prompt_delete(d)          删:删除领域 prompt
-│   └─ prompt_build(d=None)      组装:base + 领域叠加 → 最终 system prompt
+│   ├─ prompt_build(d=None)      组装:base + 领域叠加 → 最终 system prompt
+│   └─ context_build(domain, memory_hits)  总装:再叠加相关记忆段(检索结果由 main 传入)
 ├─ 记忆库 增删改查
 │   ├─ memory_add(text)          增:追加一条
 │   ├─ memory_read(keyword)      查:返回 [(序号,时间,内容)],可按关键词过滤
@@ -31,9 +32,10 @@ tools.py —— 工具函数集
 │   ├─ chat_read(last_n)         查:last_n=3 只读最后3条,不传读全部
 │   ├─ chat_update(i, text)      改:按序号
 │   ├─ chat_delete(i)            删:按序号
-│   └─ chat_clear()              清空(慎用)
+│   ├─ chat_clear()              清空(慎用)
+│   └─ chat_to_messages(last_n)  桥:聊天记录 → API 干净 messages(剥掉 time)
 ├─ 通用读写
-│   └─ file_read_write(path, mode, content)   磁盘I/O唯一入口:文本读写,自带编码回退
+│   └─ file_read_write(path, mode, content)   磁盘I/O唯一入口:文本/二进制读写,自带编码回退
 ├─ 输入
 │   ├─ U_Input()                 读输入,exit() 退出,Code_Send: 触发文件投喂,返回 user_input
 │   └─ _Code_Send(user_input)    内部:文件投喂分支(白名单/5MB/类型分发/1.5MB 拦截)
@@ -133,6 +135,19 @@ def prompt_build(domain=None):
         else:
             print(f"[tools] 注意:领域「{domain}」没有 prompt,只用 base")
     return "\n\n".join(parts)
+
+
+def context_build(domain=None, memory_hits=None):
+    """总装最终 system prompt:prompt_build 的结果 + 相关记忆段
+
+    memory_hits: embedding.embed_search 的返回值 [(相似度,时间,内容),...],由 main 传入
+    解耦说明:本函数不调用 embedding,检索在 main 完成,这里只负责拼装
+    """
+    prompt = prompt_build(domain)
+    if memory_hits:
+        lines = [f"- {content}" for _, _, content in memory_hits]
+        prompt += "\n\n## 相关记忆\n" + "\n".join(lines)
+    return prompt
 
 
 # ==================== 记忆库 增删改查 ====================
@@ -240,15 +255,29 @@ def chat_clear():
     return True
 
 
+def chat_to_messages(last_n=None):
+    """桥:把聊天记录转成 API 要的干净 messages(剥掉 time 字段)
+
+    返回 [{"role","content"},...],直接喂给 *_Core 的 history 参数
+    将来有 tool_calls 类记录时这里要跟着扩展,现阶段只有 user/assistant
+    """
+    return [{"role": item["role"], "content": item["content"]}
+            for item in chat_read(last_n=last_n)]
+
+
 # ==================== 通用读写 ====================
 def file_read_write(file_path, mode, content=None):
     """磁盘 I/O 唯一入口(重构版):文本读写,自带编码回退
 
     mode='read'   读文本,编码自动回退 utf-8 → gbk → gb2312 → latin-1
+    mode='read_bin' 读二进制,返回 bytes(Code_Send 的图片/压缩包走这里)
     mode='write'  覆盖写
     mode='append' 追加写
     注意:json 结构化数据(聊天记录)不走这里,走 _read_json/_write_json
     """
+    if mode == "read_bin":
+        with open(file_path, "rb") as f:
+            return f.read()
     if mode == "read":
         for enc in ("utf-8", "gbk", "gb2312", "latin-1"):
             try:
@@ -324,8 +353,7 @@ def _Code_Send(user_input):
             return user_input
     elif local.endswith((".jpg", ".png", ".gif", ".mp4", ".mp3", ".pdf", ".zip", ".exe")):
         # 注意:文本模型看不了图/二进制,base64 只会白白占上下文(旧版行为,原样保留)
-        with open(local, "rb") as f:
-            data = base64.b64encode(f.read()).decode()
+        data = base64.b64encode(file_read_write(local, "read_bin")).decode()
         print("\n成功读取二进制文件,转为base64编码")
     # 5. 拼接到输入
     if data is not None:
@@ -415,10 +443,31 @@ if __name__ == "__main__":
     chat_delete(2)
     print("最后1条:", chat_read(last_n=1))
 
+    # chat_to_messages 桥
+    msgs = chat_to_messages(last_n=1)
+    print("桥输出:", msgs, "(应无 time 字段)")
+
+    # context_build 总装
+    hits = [(0.66, "2026-09-27 10:00", "用户主板串口坏了")]
+    final_prompt = context_build(domain="code", memory_hits=hits)
+    print("总装含记忆段:", "相关记忆" in final_prompt and "串口" in final_prompt)
+
+    # read_bin
+    p_bin = os.path.join(tmp, "b.zip")   # 用白名单内的扩展名,否则会被 Code_Send 拒收
+    with open(p_bin, "wb") as f:
+        f.write(b"\x00\x01binary")
+    print("read_bin:", file_read_write(p_bin, "read_bin") == b"\x00\x01binary")
+
     # Code_Send 全流程(用假的 input 走一遍,不用手动敲)
     inputs = iter(["Code_Send:", p_md])
     builtins.input = lambda prompt="": next(inputs)
     result = U_Input()
     print("Code_Send 结果含文件内容:", "第二行" in result)
+
+    # Code_Send 二进制分支
+    inputs2 = iter(["Code_Send:", p_bin])
+    builtins.input = lambda prompt="": next(inputs2)
+    r2 = U_Input()
+    print("Code_Send 二进制:", base64.b64encode(b"\x00\x01binary").decode() in r2)
 
     print("自测全部通过")

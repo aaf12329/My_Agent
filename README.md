@@ -16,7 +16,9 @@
 
 ```
 Deepseek_port_new/
-├── main.py                 # 唯一入口（对话循环待接）
+├── main.py                 # 唯一入口：控制台对话循环
+├── GUI.py                  # 图形界面（tkinter，后台线程调模型，布局参考旧版）
+├── GUI_Engage.bat          # 双击启动图形版
 ├── tool/                   # 功能模块包
 │   ├── __init__.py
 │   ├── Store.py            # 路径注册表：全项目文件位置的唯一登记处（纯地址簿，不做读写）
@@ -52,10 +54,13 @@ Deepseek_port_new/
 | tools | `chat_add / chat_read / chat_update / chat_delete` | 聊天记录增删改查 |
 | tools | `file_read_write(path, mode, content)` | 磁盘 I/O 唯一入口，自带编码回退（utf-8→gbk→gb2312→latin-1） |
 | tools | `U_Input()` | 读输入；`Code_Send:` 前缀触发文件投喂 |
+| tools | `chat_to_messages(last_n)` | 桥：聊天记录 → API 干净 messages（剥 time 字段） |
+| tools | `context_build(domain, memory_hits)` | 总装：prompt + 相关记忆段 → 最终 system prompt（检索结果由 main 传入，保持解耦） |
 | Model_Function | `Deepseek_Core / GLM_Core / GPT_Core` | 便捷层：`(user_input, prompt, history)` 一问一答 |
 | Model_Function | `Deepseek_messages / GLM_messages / GPT_messages` | 低层：收完整 messages 列表，Agent 循环的地基 |
 | embedding | `text_to_vector(text)` | 单句 → 512 维归一化向量 |
 | embedding | `embed_build() / embed_search(query, top_k)` | 全库建索引 / 语义检索（索引过期自动重建） |
+| embedding | `classify_input(query)` | 领域路由：与各领域 .md 全文比相似度，低于阈值返回 None |
 | Compress_mudel | `Memory_Scale_detect() / Compress_control()` | 超阈值检测 / 执行压缩 |
 
 **模型层返回契约**：所有调用统一返回 dict
@@ -73,9 +78,11 @@ myvenv\Scripts\python.exe -m pip install openai python-dotenv python-docx openpy
 ::    OPENAI_API_KEY=sk-xxxx
 
 :: 3. 启动
-Engage.bat
+Engage.bat              :: 控制台版
+GUI_Engage.bat          :: 图形版
 :: 或
 myvenv\Scripts\python.exe main.py
+myvenv\Scripts\python.exe GUI.py
 
 :: 4. 各模块自测（全部自带临时目录测试，不碰真实数据）
 myvenv\Scripts\python.exe -m tool.tools             :: 功能库全量自测
@@ -100,10 +107,11 @@ myvenv\Scripts\python.exe -m tool.Compress_mudel    :: 压缩链路自测
 - [x] 三家模型适配（双层入口 + 重试退避 + reasoning/usage 三路收集）
 - [x] 记忆语义检索（建库 + 检索 + 索引自动重建）
 - [x] 记忆压缩模块重构（走 Store、签名修复、去多角色）
-- [ ] `chat_to_messages()` + main.py 对话循环（多轮对话上线）
-- [ ] `context_build()` 总装：prompt + 检索记忆 + 历史 → 最终上下文
+- [x] `chat_to_messages()` / `context_build()`（多轮与总装的库层就绪）
+- [x] `classify_input()` 领域自动路由（本地分类，自动挂载特化 prompt）
+- [x] main.py 对话循环 + GUI 图形界面（多轮对话上线）
 - [ ] Agent 化三件套：TOOLS 声明 / tool_calls 解析 / 工具执行循环（含审批与路径沙箱）
-- [ ] `classify_input()` 领域自动路由（本地分类，自动挂载特化 prompt）
+- [ ] ~~`classify_input()` 领域自动路由~~（已完成，见 embedding.py）
 
 ---
 
@@ -125,7 +133,9 @@ Goal: evolve from a "chatbot" into a personal Agent with a **prompt pool + memor
 
 ```
 Deepseek_port_new/
-├── main.py                 # Single entry point (conversation loop pending)
+├── main.py                 # Single entry: console conversation loop
+├── GUI.py                  # Tkinter GUI (model runs in a background thread, layout from the old edition)
+├── GUI_Engage.bat          # Double-click launcher for the GUI
 ├── tool/                   # Feature package
 │   ├── __init__.py
 │   ├── Store.py            # Path registry: the only place that knows where files live (constants only)
@@ -161,10 +171,13 @@ Deepseek_port_new/
 | tools | `chat_add / chat_read / chat_update / chat_delete` | Chat history CRUD |
 | tools | `file_read_write(path, mode, content)` | The single disk-I/O gate, with encoding fallback (utf-8→gbk→gb2312→latin-1) |
 | tools | `U_Input()` | Reads input; `Code_Send:` prefix triggers file feeding |
+| tools | `chat_to_messages(last_n)` | Bridge: chat log → clean API messages (strips time) |
+| tools | `context_build(domain, memory_hits)` | Assembly: prompt + relevant-memory section → final system prompt (retrieval results passed in from main, keeping decoupling) |
 | Model_Function | `Deepseek_Core / GLM_Core / GPT_Core` | Convenience layer: `(user_input, prompt, history)` single exchange |
 | Model_Function | `Deepseek_messages / GLM_messages / GPT_messages` | Low level: takes a full messages list — the foundation for the agent loop |
 | embedding | `text_to_vector(text)` | One sentence → 512-dim normalized vector |
 | embedding | `embed_build() / embed_search(query, top_k)` | Build index / semantic retrieval (stale index auto-rebuilt) |
+| embedding | `classify_input(query)` | Domain routing: similarity against each domain .md body; returns None below threshold |
 | Compress_mudel | `Memory_Scale_detect() / Compress_control()` | Threshold check / run compression |
 
 **Model layer return contract**: every call returns a dict —
@@ -182,9 +195,11 @@ myvenv\Scripts\python.exe -m pip install openai python-dotenv python-docx openpy
 ::    OPENAI_API_KEY=sk-xxxx
 
 :: 3. Launch
-Engage.bat
+Engage.bat              :: console edition
+GUI_Engage.bat          :: GUI edition
 :: or
 myvenv\Scripts\python.exe main.py
+myvenv\Scripts\python.exe GUI.py
 
 :: 4. Module self-tests (all run in temp dirs, never touch real data)
 myvenv\Scripts\python.exe -m tool.tools
@@ -209,7 +224,7 @@ myvenv\Scripts\python.exe -m tool.Compress_mudel
 - [x] Three-provider adapters (dual-layer entries + retry/backoff + reasoning/usage collection)
 - [x] Semantic memory retrieval (build + search + automatic index rebuild)
 - [x] Compression module refactor (via Store, signature fixed, multi-role removed)
-- [ ] `chat_to_messages()` + main.py conversation loop (multi-turn)
-- [ ] `context_build()` assembly: prompt + retrieved memory + history → final context
+- [x] `chat_to_messages()` / `context_build()` (library layer ready for multi-turn and assembly)
+- [x] `classify_input()` domain routing (local classifier, auto-mount domain modules)
+- [x] main.py conversation loop + GUI (multi-turn chat is live)
 - [ ] Agent trio: TOOLS declarations / tool_calls parsing / tool-execution loop (with approval & path sandbox)
-- [ ] `classify_input()` domain routing (local classifier, auto-mount domain modules)
