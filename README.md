@@ -40,6 +40,12 @@ Deepseek_port_new/
 ├── ChatHistory/            # 聊天记录（.json，与记忆库分开）
 │   └── chat_history.json
 ├── 封存/                   # 历史存档（多角色版、Transformer_test 等），不再维护
+├── whale/                  # 小鲸鱼桌面挂件（Electron，独立子系统，与 tool/ 零耦合）
+│   ├── Engage.bat          # 双击启动（自带便携 Node 的 PATH）
+│   ├── main.js             # 主进程：窗口/拖拽吸附/IPC（含结构分析注释）
+│   ├── preload.js          # IPC 桥（渲染层唯一能力出口）
+│   ├── lib/core.js         # 核心：余额拉取/记账/峰谷定价/AES加密（含结构分析注释）
+│   └── renderer/           # 界面（含结构分析注释）
 ├── Engage.bat              # 双击启动
 └── myvenv/                 # Python 虚拟环境（Python 3.14）
 ```
@@ -85,6 +91,9 @@ GUI_Engage.bat          :: 图形版
 :: 或
 myvenv\Scripts\python.exe main.py
 myvenv\Scripts\python.exe GUI.py
+
+:: 3b. 小鲸鱼挂件（独立子系统，需先完成 whale 内的一次性 Node 环境，见 whale/README.md）
+whale\Engage.bat        :: 余额挂件（Electron）
 
 :: 4. 各模块自测（全部自带临时目录测试，不碰真实数据）
 myvenv\Scripts\python.exe -m tool.tools             :: 功能库全量自测
@@ -175,6 +184,12 @@ Deepseek_port_new/
 ├── ChatHistory/            # Chat history (.json, kept apart from memory)
 │   └── chat_history.json
 ├── 封存/                   # Legacy archive (multi-role edition, Transformer_test, etc.)
+├── whale/                  # Whale desktop widget (Electron, independent subsystem, zero coupling with tool/)
+│   ├── Engage.bat          # Double-click launcher (bundles portable Node in PATH)
+│   ├── main.js             # Main process: window/drag-snap/IPC (with structure-analysis comments)
+│   ├── preload.js          # IPC bridge (the renderer's only capability outlet)
+│   ├── lib/core.js         # Core: balance fetching/ledger/peak-valley pricing/AES (with structure-analysis comments)
+│   └── renderer/           # UI (with structure-analysis comments)
 ├── Engage.bat              # Double-click launcher
 └── myvenv/                 # Python virtual environment (Python 3.14)
 ```
@@ -220,6 +235,9 @@ GUI_Engage.bat          :: GUI edition
 :: or
 myvenv\Scripts\python.exe main.py
 myvenv\Scripts\python.exe GUI.py
+
+:: 3b. Whale widget (independent subsystem; one-time Node setup inside whale/, see whale/README.md)
+whale\Engage.bat        :: balance widget (Electron)
 
 :: 4. Module self-tests (all run in temp dirs, never touch real data)
 myvenv\Scripts\python.exe -m tool.tools

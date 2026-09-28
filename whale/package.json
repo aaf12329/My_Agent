@@ -1,0 +1,70 @@
+{
+  "name": "deepseek-whale-widget-desktop",
+  "version": "1.0.1",
+  "description": "DeepSeek 余额小鲸鱼桌面版",
+  "main": "main.js",
+  "private": true,
+  "author": "MeteorNOX",
+  "contributors": [
+    "EthanMaven"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "node scripts/prepare-electron.mjs && electron-builder --win portable",
+    "dist:win": "node scripts/prepare-electron.mjs && electron-builder --win",
+    "dist:mac": "node scripts/prepare-electron.mjs && electron-builder --mac",
+    "dist:all": "node scripts/prepare-electron.mjs && electron-builder --win --mac"
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.2"
+  },
+  "build": {
+    "appId": "com.meteornox.whalewidget",
+    "productName": "DeepSeekWhaleWidget",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "electronDist": "build/electron-dist",
+    "portable": {
+      "artifactName": "${productName}_${version}_win_x86.${ext}"
+    },
+    "npmRebuild": false
+  }
+}

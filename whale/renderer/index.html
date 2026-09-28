@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<!-- ==========================================================================
+     结构分析注释 · 非原作者所写，仅供阅读参考
+
+     这个 HTML 只有 21 行，但它是整个安全模型的"门"：
+
+     1) CSP（第 5 行）是本项目最关键的一行配置，逐条限制渲染层能力：
+          default-src 'self'       默认只加载自己的资源
+          script-src  'self'       不允许内联脚本、不允许外部脚本
+          style-src   'self' + unsafe-inline   样式允许内联（widget.js 注入 CSS 用）
+          img-src     'self' data:  图片只允许本地与 data URI
+          media-src   'self'        音效 mp3 只允许本地
+          connect-src 'none'        ★ 禁止一切网络请求 ★
+        最后一条意味着渲染层连 fetch/XHR 都发不出去——所以余额请求只能由
+        主进程（main.js → core.js）代发，API_KEY 也就永远到不了页面这一侧。
+        注入恶意脚本也读不到密钥，因为它根本不在这个进程里。
+
+     2) html/body 透明且无边距：Electron 主窗口设了 transparent:true，
+        页面背景留空才能露出桌面，鲸鱼的"悬浮"效果由此而来。
+
+     3) 页面只有一个元素：<script>。所有 DOM（鲸鱼图、菜单、气泡）都是
+        widget.js 运行时用 createElement 建出来的——见该文件"DOM 构建区"。
+     ========================================================================== -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'none';">
+  <title>DeepSeek 余额小鲸鱼</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow: hidden;
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <script src="./widget.js"></script>
+</body>
+</html>
