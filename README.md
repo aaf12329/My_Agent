@@ -83,6 +83,85 @@ Deepseek_port_new/
 **模型层返回契约**：所有调用统一返回 dict
 `{"content": 回答文本, "reasoning": 思考过程, "usage": token账单(含缓存命中率)}`
 
+## 架构图：谁负责什么，谁调用谁
+
+### 图 1 · 分层与职责
+
+```
+┌──────────────── 入口层(壳)：唯一有权横向调用的层 ────────────────┐
+│  main.py 控制台版           GUI.py 气泡图形版                    │
+│  职责:模式切换(/agent)、编排一轮对话、聊天记录落盘(只存主干)       │
+└──────┬──────────────────────────────┬──────────────────────────┘
+       │ Workflow(固定管线,你替它想)   │ Agent(自主决策,它自己想)
+       ▼                              ▼
+┌──────────────────┐      ┌─────────────────────────┐
+│ tool/embedding   │      │ agent_loop.py           │
+│   语义检索+路由   │      │ 职责:内层循环+保险丝     │
+│ tool/tools       │      │ 每轮:调模型(带工具清单)  │
+│   记忆CRUD+I/O   │      │  ├─ 无工具调用→最终答案  │
+│ tool/Model_Fn    │      │  └─ 有→执行→回灌→再决策  │
+│   三家模型适配    │      └───────────┬─────────────┘
+└──────────────────┘                  ▼
+                          ┌──────────────────────────┐
+                          │ tool/Agent_tool.py        │
+                          │ 职责:工具声明/沙箱/审批/分发│
+                          └──┬─────────┬─────────┬───┘
+                             ▼         ▼         ▼
+                        tools.py  embedding.py  Compress_mudel.py
+                             └─────────┴─────────┘
+                                      ▼
+                          tool/Store.py(纯路径地址簿：人人读它,它不调用任何人)
+```
+
+### 图 2 · 依赖方向（箭头 = 调用）
+
+```
+main.py / GUI.py ──► agent_loop.py ──► Model_Function.py ──► DeepSeek/GLM/GPT(网络)
+       │                  │
+       │                  └──► Agent_tool.py(工具适配层,全项目唯一特批的横向 import)
+       ├──► tools.py ────────────────┘(五个工具的真正实现就在这些模块里)
+       ├──► embedding.py ────────────┘
+       ├──► Compress_mudel.py ───────┘
+       └──► Store.py
+
+  解耦铁律:除 Agent_tool.py(工具适配层)外,tool/ 内各模块之间零 import;
+  所有模块都只读 Store(路径),Store 不调用任何人
+```
+
+### 图 3 · Agent 工具调用结构（一轮自主决策的时序）
+
+```
+用户输入
+   │
+   ▼
+agent_loop.run_agent_turn
+   │  messages = [system(base 规则), 最近历史..., user]
+   ▼
+Model_Function.Deepseek_messages(messages, tools=Agent_tool.get_tools())
+   │
+   │   发给模型的请求里带 5 个工具的 JSON Schema 声明
+   ▼
+模型决策
+   ├── 不需要工具 ──► content = 最终回答 ──► chat_add 落盘(user+assistant 主干) ──► 结束
+   │
+   └── 需要工具 ──► 返回 tool_calls[{name, arguments}]   (content 通常为空)
+          │
+          ▼
+   Agent_tool.execute_tool(name, args, approval)
+          │  ① 工具存在性检查 → ② JSON 参数解析 → ③ risky 审批(ask/auto/never)
+          │  → ④ 执行 → ⑤ 任何异常都转成"给模型看的修正提示"(不是抛给人看的报错)
+          ├── search_memory   ──► embedding.embed_search     (语义检索记忆)
+          ├── find_memory     ──► tools.memory_read          (关键词精确查)
+          ├── remember        ──► tools.memory_add           (存事实入记忆库)
+          ├── read_file       ──► file_read_write + 路径沙箱  (禁 .env / 禁越界)
+          └── compress_memory ──► Compress_control  [危险,需审批] (重写记忆库)
+          │
+          ▼
+   每个结果包成 {"role":"tool","tool_call_id":id,"content":文本} 回灌 messages
+          │
+          └──► 回到顶部让模型看着结果再决策(循环;最多 max_steps=8 轮,超限熔断)
+```
+
 ## 运行方式
 
 ```cmd
@@ -238,6 +317,86 @@ Deepseek_port_new/
 
 **Model layer return contract**: every call returns a dict —
 `{"content": reply text, "reasoning": thinking process, "usage": token bill (incl. cache hit rate)}`
+
+## Architecture: who does what, who calls whom
+
+### Diagram 1 · Layers & responsibilities
+
+```
+┌────────────── Entry layer (the shell): the ONLY layer allowed to call sideways ────────────┐
+│  main.py (console)            GUI.py (bubble GUI)                                          │
+│  Duties: mode switch (/agent), orchestrating a turn, persisting chat trunk                  │
+└──────┬──────────────────────────────┬──────────────────────────────────────────────────────┘
+       │ Workflow (fixed pipeline)     │ Agent (autonomous decisions)
+       ▼                              ▼
+┌──────────────────┐      ┌─────────────────────────┐
+│ tool/embedding   │      │ agent_loop.py           │
+│   semantic+route │      │ duty: inner loop + fuse │
+│ tool/tools       │      │ each round: call model  │
+│   memory CRUD+I/O│      │  ├─ no tool_calls→answer│
+│ tool/Model_Fn    │      │  └─ yes→execute→feed    │
+│   3 providers    │      │     back→re-decide      │
+└──────────────────┘      └───────────┬─────────────┘
+                          ┌──────────────────────────┐
+                          │ tool/Agent_tool.py        │
+                          │ duty: schemas/sandbox/    │
+                          │       approval/dispatch   │
+                          └──┬─────────┬─────────┬───┘
+                             ▼         ▼         ▼
+                        tools.py  embedding.py  Compress_mudel.py
+                             └─────────┴─────────┘
+                                      ▼
+                          tool/Store.py (path registry: read by all, calls nobody)
+```
+
+### Diagram 2 · Dependency directions (arrow = calls)
+
+```
+main.py / GUI.py ──► agent_loop.py ──► Model_Function.py ──► DeepSeek/GLM/GPT (network)
+       │                  │
+       │                  └──► Agent_tool.py (tool adapter: the ONLY sanctioned sideways import)
+       ├──► tools.py ────────────────┘ (the five tools' real implementations live here)
+       ├──► embedding.py ─────────────┘
+       ├──► Compress_mudel.py ────────┘
+       └──► Store.py
+
+  Decoupling rule: except Agent_tool.py (the tool adapter), modules inside tool/
+  never import each other; every module only reads Store (paths), and Store calls nobody
+```
+
+### Diagram 3 · Agent tool-calling structure (one autonomous turn, in sequence)
+
+```
+user input
+   │
+   ▼
+agent_loop.run_agent_turn
+   │  messages = [system(base rules), recent history..., user]
+   ▼
+Model_Function.Deepseek_messages(messages, tools=Agent_tool.get_tools())
+   │
+   │   the request carries JSON Schema declarations of 5 tools
+   ▼
+model decides
+   ├── no tool needed ──► content = final answer ──► chat_add (user+assistant trunk) ──► done
+   │
+   └── needs a tool ──► returns tool_calls[{name, arguments}]   (content usually empty)
+          │
+          ▼
+   Agent_tool.execute_tool(name, args, approval)
+          │  ① existence check → ② JSON arg parsing → ③ risky approval (ask/auto/never)
+          │  → ④ execute → ⑤ any exception becomes model-readable guidance (not a crash)
+          ├── search_memory   ──► embedding.embed_search     (semantic memory search)
+          ├── find_memory     ──► tools.memory_read          (keyword lookup)
+          ├── remember        ──► tools.memory_add           (persist a fact)
+          ├── read_file       ──► file_read_write + path sandbox (no .env / no escape)
+          └── compress_memory ──► Compress_control  [risky, needs approval] (rewrites memory)
+          │
+          ▼
+   each result is wrapped as {"role":"tool","tool_call_id":id,"content":text} and fed back
+          │
+          └──► back to the top for re-decision (loop; at most max_steps=8 rounds, then fuse)
+```
 
 ## How to run
 
