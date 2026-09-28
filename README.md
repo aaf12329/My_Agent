@@ -50,6 +50,13 @@ Deepseek_port_new/
 └── myvenv/                 # Python 虚拟环境（Python 3.14）
 ```
 
+> **whale/ 独立性说明**：第三方开源项目（MIT，源码来自
+> [comreade-123/DeepSeek-Whale-widget-desktop](https://github.com/comreade-123/DeepSeek-Whale-widget-desktop)，
+> 上游 MeteorNOX/DeepSeek-Balance-Whale-Widget）的原样副本，显示 DeepSeek API 余额与用量。
+> 运行时为便携版 Node.js v24（装在 `C:\nodejs`，免管理员，不污染系统）+ Electron（在 whale/node_modules 内），
+> 与 Python 主项目互不 import、互不影响；`node_modules/`、`userdata.json` 等已被其自带 .gitignore 挡在仓库外。
+> 与主项目的集成（agent 状态桥接）为规划中的独立任务。
+
 ## 功能库 API 概览
 
 | 模块 | 关键函数 | 说明 |
@@ -92,7 +99,7 @@ GUI_Engage.bat          :: 图形版
 myvenv\Scripts\python.exe main.py
 myvenv\Scripts\python.exe GUI.py
 
-:: 3b. 小鲸鱼挂件（独立子系统，需先完成 whale 内的一次性 Node 环境，见 whale/README.md）
+:: 3b. 小鲸鱼挂件（独立子系统；便携 Node 已装于 C:\nodejs，Engage.bat 自带 PATH）
 whale\Engage.bat        :: 余额挂件（Electron）
 
 :: 4. 各模块自测（全部自带临时目录测试，不碰真实数据）
@@ -194,6 +201,14 @@ Deepseek_port_new/
 └── myvenv/                 # Python virtual environment (Python 3.14)
 ```
 
+> **whale/ independence note**: a verbatim copy of a third-party MIT project (source from
+> [comreade-123/DeepSeek-Whale-widget-desktop](https://github.com/comreade-123/DeepSeek-Whale-widget-desktop),
+> upstream MeteorNOX/DeepSeek-Balance-Whale-Widget) that shows your DeepSeek API balance and usage.
+> Its runtime is portable Node.js v24 (installed at `C:\nodejs`, admin-free, no system pollution) plus
+> Electron (inside whale/node_modules). It never imports the Python project and vice versa;
+> `node_modules/`, `userdata.json` etc. are kept out of the repo by its own .gitignore.
+> Integration with the main project (agent status bridge) is a planned separate task.
+
 ## Library API overview
 
 | Module | Key functions | Notes |
@@ -236,7 +251,7 @@ GUI_Engage.bat          :: GUI edition
 myvenv\Scripts\python.exe main.py
 myvenv\Scripts\python.exe GUI.py
 
-:: 3b. Whale widget (independent subsystem; one-time Node setup inside whale/, see whale/README.md)
+:: 3b. Whale widget (independent subsystem; portable Node installed at C:\nodejs, Engage.bat bundles PATH)
 whale\Engage.bat        :: balance widget (Electron)
 
 :: 4. Module self-tests (all run in temp dirs, never touch real data)
