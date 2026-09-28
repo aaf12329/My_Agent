@@ -19,6 +19,7 @@ Deepseek_port_new/
 ├── main.py                 # 唯一入口：控制台对话循环
 ├── GUI.py                  # 图形界面（左右气泡聊天风：用户蓝底靠右/AI灰底靠左，后台线程调模型）
 ├── GUI_Engage.bat          # 双击启动图形版
+├── agent_loop.py           # Agent 内层循环：执行→回灌→再决策（main/GUI 共用，/agent 切换）
 ├── tool/                   # 功能模块包
 │   ├── __init__.py
 │   ├── Store.py            # 路径注册表：全项目文件位置的唯一登记处（纯地址簿，不做读写）
@@ -70,13 +71,14 @@ Deepseek_port_new/
 | tools | `U_Input()` | 读输入；`Code_Send:` 前缀触发文件投喂 |
 | tools | `chat_to_messages(last_n)` | 桥：聊天记录 → API 干净 messages（剥 time 字段） |
 | tools | `context_build(domain, memory_hits)` | 总装：prompt + 相关记忆段 → 最终 system prompt（检索结果由 main 传入，保持解耦） |
-| Model_Function | `Deepseek_Core / GLM_Core / GPT_Core` | 便捷层：`(user_input, prompt, history)` 一问一答 |
-| Model_Function | `Deepseek_messages / GLM_messages / GPT_messages` | 低层：收完整 messages 列表，Agent 循环的地基 |
+| Model_Function | `Deepseek_Core / GLM_Core / GPT_Core` | 便捷层：`(user_input, prompt, history, tools)` 一问一答或工具调用 |
+| Model_Function | `Deepseek_messages / GLM_messages / GPT_messages` | 低层：收完整 messages 列表 + tools 参数，流式 tool_calls 分片累积 |
 | embedding | `text_to_vector(text)` | 单句 → 512 维归一化向量 |
 | embedding | `embed_build() / embed_search(query, top_k)` | 全库建索引 / 语义检索（索引过期自动重建） |
 | embedding | `classify_input(query)` | 领域路由：与各领域 .md 全文比相似度，低于阈值返回 None |
 | Compress_mudel | `Memory_Scale_detect() / Compress_control()` | 超阈值检测 / 执行压缩 |
 | Agent_tool | `TOOLS / execute_tool(name, args_json, approval)` | 模型工具声明（search_memory / find_memory / remember / read_file / compress_memory）/ 分发执行（路径沙箱 + 危险审批 + 异常转文本） |
+| agent_loop | `run_agent_turn(user_input, prompt, history, provider, approval, max_steps)` | **Agent 主入口**：模型自主决定调哪个工具，执行→回灌→再决策，返回 `{content, steps, messages}` |
 
 **模型层返回契约**：所有调用统一返回 dict
 `{"content": 回答文本, "reasoning": 思考过程, "usage": token账单(含缓存命中率)}`
@@ -120,6 +122,8 @@ myvenv\Scripts\python.exe -m tool.Agent_tool        :: 工具层自测(沙箱/�
 
 **切换模型**：把 `main.py` 的 `Control()` 或 `GUI.py` 的 `_worker()` 里的 `Deepseek_Core(...)` 换成 `GLM_Core(...)` 或 `GPT_Core(...)` 即可，返回契约完全一致。
 
+**切到 Agent 模式**：控制台输入 `/agent` 回车（再敲一次切回 Workflow）；图形版勾选 Agent 框。Agent 模式下**查不查记忆、存不存东西、读不读文件由模型自己决定**，每轮工具调用实时打印，`max_steps=8` 保险丝防跑飞。
+
 **看 token 账单**：每轮对话结束打印 `[usage] 输入N(缓存命中M,百分比) 输出N 共N`——缓存命中率就是你"前缀稳定"设计的成绩单，一直接近 0% 就该回头查上下文拼装。
 
 **压缩**：全自动，无需手动——`memory.md` 超 1.5MB 时下一轮对话触发摘要并按条目格式写回。
@@ -144,7 +148,7 @@ myvenv\Scripts\python.exe -m tool.Agent_tool        :: 工具层自测(沙箱/�
 - [x] `classify_input()` 领域自动路由（本地分类，自动挂载特化 prompt）
 - [x] main.py 对话循环 + GUI 图形界面（多轮对话上线）
 - [x] Agent 工具适配层：TOOLS 声明 / 路径沙箱 / 危险操作审批 / 分发执行（tool/Agent_tool.py，5 个工具）
-- [ ] Agent 循环：tool_calls 解析 + 执行→回灌→再决策（带 max_steps 保险丝），把决策权交给模型
+- [x] Agent 循环：tool_calls 解析 + 执行→回灌→再决策（max_steps 保险丝；控制台 `/agent` 切换、GUI 勾选框）——**Agent 化完成**
 - [ ] ~~`classify_input()` 领域自动路由~~（已完成，见 embedding.py）
 
 ---
@@ -170,6 +174,7 @@ Deepseek_port_new/
 ├── main.py                 # Single entry: console conversation loop
 ├── GUI.py                  # Chat-bubble GUI (user blue right / AI gray left, model in a background thread)
 ├── GUI_Engage.bat          # Double-click launcher for the GUI
+├── agent_loop.py           # Agent inner loop: execute→feed-back→re-decide (shared by main/GUI, /agent to switch)
 ├── tool/                   # Feature package
 │   ├── __init__.py
 │   ├── Store.py            # Path registry: the only place that knows where files live (constants only)
@@ -222,13 +227,14 @@ Deepseek_port_new/
 | tools | `U_Input()` | Reads input; `Code_Send:` prefix triggers file feeding |
 | tools | `chat_to_messages(last_n)` | Bridge: chat log → clean API messages (strips time) |
 | tools | `context_build(domain, memory_hits)` | Assembly: prompt + relevant-memory section → final system prompt (retrieval results passed in from main, keeping decoupling) |
-| Model_Function | `Deepseek_Core / GLM_Core / GPT_Core` | Convenience layer: `(user_input, prompt, history)` single exchange |
-| Model_Function | `Deepseek_messages / GLM_messages / GPT_messages` | Low level: takes a full messages list — the foundation for the agent loop |
+| Model_Function | `Deepseek_Core / GLM_Core / GPT_Core` | Convenience layer: `(user_input, prompt, history, tools)` — single exchange or tool calling |
+| Model_Function | `Deepseek_messages / GLM_messages / GPT_messages` | Low level: full messages list + tools param, streaming tool_calls fragment accumulation |
 | embedding | `text_to_vector(text)` | One sentence → 512-dim normalized vector |
 | embedding | `embed_build() / embed_search(query, top_k)` | Build index / semantic retrieval (stale index auto-rebuilt) |
 | embedding | `classify_input(query)` | Domain routing: similarity against each domain .md body; returns None below threshold |
 | Compress_mudel | `Memory_Scale_detect() / Compress_control()` | Threshold check / run compression |
 | Agent_tool | `TOOLS / execute_tool(name, args_json, approval)` | Tool declarations for the model (search_memory / find_memory / remember / read_file / compress_memory) / dispatcher (path sandbox + risky approval + errors-as-guidance) |
+| agent_loop | `run_agent_turn(user_input, prompt, history, provider, approval, max_steps)` | **Agent main entry**: the model decides which tools to call; execute→feed-back→re-decide; returns `{content, steps, messages}` |
 
 **Model layer return contract**: every call returns a dict —
 `{"content": reply text, "reasoning": thinking process, "usage": token bill (incl. cache hit rate)}`
@@ -272,6 +278,8 @@ myvenv\Scripts\python.exe -m tool.Agent_tool        :: tool-layer self-test (san
 
 **Switch models**: replace `Deepseek_Core(...)` with `GLM_Core(...)` or `GPT_Core(...)` in `main.py`'s `Control()` or `GUI.py`'s `_worker()` — the return contract is identical.
 
+**Switch to Agent mode**: type `/agent` in the console (again to switch back to Workflow); or tick the Agent checkbox in the GUI. In Agent mode **the model decides on its own** whether to search memory, save facts, or read files; every tool step prints live, guarded by a `max_steps=8` fuse.
+
 **Read the token bill**: every turn prints `[usage] in:N(cached:M,pct) out:N total:N` — the cache hit percentage is the report card of the "stable prefix" design; if it stays near 0%, audit the context assembly.
 
 **Compression**: fully automatic — when `memory.md` exceeds 1.5MB, the next turn summarizes it and writes it back as entries.
@@ -296,4 +304,4 @@ myvenv\Scripts\python.exe -m tool.Agent_tool        :: tool-layer self-test (san
 - [x] `classify_input()` domain routing (local classifier, auto-mount domain modules)
 - [x] main.py conversation loop + GUI (multi-turn chat is live)
 - [x] Agent tool adapter: TOOLS declarations / path sandbox / risky-operation approval / dispatcher (tool/Agent_tool.py, 5 tools)
-- [ ] Agent loop: tool_calls parsing + execute→feed-back→re-decide (with max_steps fuse) — handing decision power to the model
+- [x] Agent loop: tool_calls parsing + execute→feed-back→re-decide (max_steps fuse; `/agent` switch, GUI checkbox) — **agent transformation complete**

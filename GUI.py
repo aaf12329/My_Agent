@@ -18,6 +18,7 @@ import tkinter as tk
 from tkinter import Entry, Button
 
 from tool import tools, embedding, Model_Function, Compress_mudel
+import agent_loop                             # Agent 内层循环(根目录,与 GUI 同级)
 
 BG      = "#1a1a1a"   # 窗口底色(沿用旧版)
 CANVAS  = "#111111"   # 消息区底色
@@ -88,6 +89,12 @@ bottom_frame = tk.Frame(root, bg=BG, height=100)
 bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(5, 10))
 bottom_frame.pack_propagate(False)
 
+agent_var = tk.BooleanVar(value=False)   # Agent 模式开关:勾上=模型自主调工具(后台线程禁 input,审批强制 auto)
+agent_check = tk.Checkbutton(bottom_frame, text="Agent", variable=agent_var,
+                             bg=BG, fg="#e0e0e0", selectcolor="#2a2a2a",
+                             activebackground=BG, font=("Microsoft YaHei UI", 10))
+agent_check.pack(side=tk.LEFT, padx=(0, 6))
+
 entry = Entry(bottom_frame, bg="#2a2a2a", fg="#ffffff", font=("Consolas", 13),
               insertbackground="#ffffff")
 entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), ipady=10)
@@ -107,17 +114,26 @@ def _remove_thinking():
 
 
 def _worker(user_input):
-    """后台线程:一轮完整对话(流程与 main.Control 一致)"""
+    """后台线程:一轮完整对话(Workflow/Agent 双模式)"""
     try:
-        route = embedding.classify_input(user_input)
-        domain = route[0] if route else None
-
-        hits = embedding.embed_search(user_input, top_k=5)
-        prompt = tools.context_build(domain=domain, memory_hits=hits)
         history = tools.chat_to_messages(last_n=10)
 
-        result = Model_Function.Deepseek_Core(user_input, prompt=prompt, history=history)
+        if agent_var.get():
+            # Agent 模式:决策权交给模型;后台线程不能弹 input(),审批强制 auto
+            result = agent_loop.run_agent_turn(
+                user_input, prompt=tools.prompt_build(), history=history,
+                approval="auto", verbose=False)
+        else:
+            # Workflow 模式:固定管线(与 main.Control 一致)
+            route = embedding.classify_input(user_input)
+            domain = route[0] if route else None
+
+            hits = embedding.embed_search(user_input, top_k=5)
+            prompt = tools.context_build(domain=domain, memory_hits=hits)
+            result = Model_Function.Deepseek_Core(user_input, prompt=prompt, history=history)
+
         reply = result["content"]
+        domain = None if agent_var.get() else domain   # Agent 模式不显示领域标(路由没跑)
 
         tools.chat_add("user", user_input)
         tools.chat_add("assistant", reply)

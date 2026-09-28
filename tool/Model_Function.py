@@ -7,9 +7,10 @@ Model_Function.py —— 模型调用层(纯函数:messages 进,dict 出,不碰�
 
 返回值契约(重要):
     所有 Core / *_messages 统一返回 dict:
-        {"content":   str,          回答文本
-         "reasoning": str,          思考过程(开 thinking 才有内容,默认不打印)
-         "usage":     usage|None}   token 账单(含 DeepSeek 缓存命中数)
+        {"content":    str,        回答文本(模型要调工具时为空串)
+         "reasoning":  str,        思考过程(开 thinking 才有内容,默认不打印)
+         "usage":      usage|None  token 账单(含 DeepSeek 缓存命中数)
+         "tool_calls": list}       工具调用请求(流式分片累积而成,无则为 [])
     旧版"返回字符串"契约已废弃(换约时无调用方,零成本)
 
 双层入口:
@@ -44,12 +45,15 @@ _RETRYABLE = (RateLimitError, APITimeoutError, APIConnectionError, InternalServe
 
 # ==================== DeepSeek 适配 ====================
 def Deepseek_messages(messages, model="deepseek-flash",
-                      reasoning_effort="high", thinking=True, show_thinking=False):
-    """低层入口:收现成 messages 列表,原样透传"""
+                      reasoning_effort="high", thinking=True, show_thinking=False,
+                      tools=None):
+    """低层入口:收现成 messages 列表原样透传;tools 传 get_tools() 即启用工具调用"""
     load_dotenv()
     client = OpenAI(
         api_key=os.environ.get('DEEPSEEK_API_KEY'),
         base_url="https://api.deepseek.com")
+
+    extra = {"tools": tools} if tools else {}    # 不传 tools 就不带这个参数(纯聊天场景)
 
     response = _create_with_retry(lambda: client.chat.completions.create(
         model=model,
@@ -57,13 +61,15 @@ def Deepseek_messages(messages, model="deepseek-flash",
         stream=True,
         reasoning_effort=reasoning_effort,
         stream_options={"include_usage": True},          # 不主动要,流里就没有 usage
-        extra_body={"thinking": {"type": "enabled" if thinking else "disabled"}}
+        extra_body={"thinking": {"type": "enabled" if thinking else "disabled"}},
+        **extra
     ))
     return _stream_consume(response, show_thinking)
 
 
 def Deepseek_Core(user_input, prompt="", history=None, model="deepseek-flash",
-                  reasoning_effort="high", thinking=True, show_thinking=False):
+                  reasoning_effort="high", thinking=True, show_thinking=False,
+                  tools=None):
     """便捷层:拼 [system?] + [history?] + [user] 后转调低层"""
     messages = []
     if prompt:
@@ -72,29 +78,33 @@ def Deepseek_Core(user_input, prompt="", history=None, model="deepseek-flash",
         messages.extend(history)                          # 必须是干净 [{"role","content"}],不带 time
     messages.append({"role": "user", "content": user_input})
     return Deepseek_messages(messages, model=model, reasoning_effort=reasoning_effort,
-                             thinking=thinking, show_thinking=show_thinking)
+                             thinking=thinking, show_thinking=show_thinking, tools=tools)
 
 
 # ==================== 智谱 GLM 适配 ====================
-def GLM_messages(messages, model="glm-5.3", thinking=True, show_thinking=False):
+def GLM_messages(messages, model="glm-5.3", thinking=True, show_thinking=False,
+                 tools=None):
     """低层入口:走智谱官方 OpenAI 兼容端点,不用额外装 zhipuai SDK"""
     load_dotenv()
     client = OpenAI(
         api_key=os.environ.get('ZHIPU_API_KEY'),
         base_url="https://open.bigmodel.cn/api/paas/v4")
 
+    extra = {"tools": tools} if tools else {}
+
     response = _create_with_retry(lambda: client.chat.completions.create(
         model=model,
         messages=messages,
         stream=True,
         stream_options={"include_usage": True},          # 若该端点不认这个参数,删掉本行即可
-        extra_body={"thinking": {"type": "enabled" if thinking else "disabled"}}
+        extra_body={"thinking": {"type": "enabled" if thinking else "disabled"}},
+        **extra
     ))
     return _stream_consume(response, show_thinking)
 
 
 def GLM_Core(user_input, prompt="", history=None, model="glm-5.3",
-             thinking=True, show_thinking=False):
+             thinking=True, show_thinking=False, tools=None):
     """便捷层:拼装后转调 GLM_messages"""
     messages = []
     if prompt:
@@ -102,11 +112,13 @@ def GLM_Core(user_input, prompt="", history=None, model="glm-5.3",
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_input})
-    return GLM_messages(messages, model=model, thinking=thinking, show_thinking=show_thinking)
+    return GLM_messages(messages, model=model, thinking=thinking,
+                        show_thinking=show_thinking, tools=tools)
 
 
 # ==================== OpenAI GPT 适配 ====================
-def GPT_messages(messages, model="gpt-5", reasoning_effort=None, show_thinking=False):
+def GPT_messages(messages, model="gpt-5", reasoning_effort=None, show_thinking=False,
+                 tools=None):
     """低层入口。reasoning_effort 不传就不带这个参数(非推理模型会报错)"""
     load_dotenv()
     client = OpenAI(
@@ -116,6 +128,8 @@ def GPT_messages(messages, model="gpt-5", reasoning_effort=None, show_thinking=F
     extra = {}
     if reasoning_effort:
         extra["reasoning_effort"] = reasoning_effort
+    if tools:
+        extra["tools"] = tools
 
     response = _create_with_retry(lambda: client.chat.completions.create(
         model=model,
@@ -128,7 +142,7 @@ def GPT_messages(messages, model="gpt-5", reasoning_effort=None, show_thinking=F
 
 
 def GPT_Core(user_input, prompt="", history=None, model="gpt-5",
-             reasoning_effort=None, show_thinking=False):
+             reasoning_effort=None, show_thinking=False, tools=None):
     """便捷层:拼装后转调 GPT_messages"""
     messages = []
     if prompt:
@@ -137,7 +151,7 @@ def GPT_Core(user_input, prompt="", history=None, model="gpt-5",
         messages.extend(history)
     messages.append({"role": "user", "content": user_input})
     return GPT_messages(messages, model=model, reasoning_effort=reasoning_effort,
-                        show_thinking=show_thinking)
+                        show_thinking=show_thinking, tools=tools)
 
 
 # ==================== 内部共用 ====================
@@ -155,16 +169,18 @@ def _create_with_retry(make_call, retries=3):
 
 
 def _stream_consume(response, show_thinking=False):
-    """内部:消费流式响应,三路收集,返回 dict
+    """内部:消费流式响应,四路收集,返回 dict
 
-    DeepSeek 流的时序:reasoning_content 分片先到 → content 分片后到 → 空 choices 收尾(usage 藏这)
+    DeepSeek 流的时序:reasoning_content 分片先到 → content/tool_calls 分片到 → 空 choices 收尾(usage 藏这)
+    tool_calls 分片按 index 分槽累积:id/name 只在首个分片出现(有值才写),arguments 逐段 += 拼接
     """
     content_buf = ""
     reasoning_buf = ""
     usage = None
+    tool_buf = {}                                    # index -> {"id","name","arguments"}
     print("Ai_response:")
     for chunk in response:
-        if not chunk.choices:                             # 收尾 chunk:choices 空,usage 藏在这
+        if not chunk.choices:                        # 收尾 chunk:choices 空,usage 藏在这
             usage = getattr(chunk, "usage", None)
             continue
         delta = chunk.choices[0].delta
@@ -175,12 +191,28 @@ def _stream_consume(response, show_thinking=False):
             if show_thinking:
                 print(piece, end="")
             continue
+        # 工具调用分片:与 content 同期到达,可能多个工具交错(index 区分)
+        for tc in (getattr(delta, "tool_calls", None) or []):
+            slot = tool_buf.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+            if tc.id:
+                slot["id"] = tc.id                   # id 只在首片,有值才写(不能覆盖)
+            fn = getattr(tc, "function", None)
+            if fn and fn.name:
+                slot["name"] = fn.name               # 同上
+            if fn and fn.arguments:
+                slot["arguments"] += fn.arguments    # 参数是逐段吐的,必须累加
         if delta and delta.content:
             content_buf += delta.content
             print(delta.content, end="")
     print("\n")
     _print_usage(usage)
-    return {"content": content_buf, "reasoning": reasoning_buf, "usage": usage}
+    tool_calls = [
+        {"id": slot["id"], "type": "function",
+         "function": {"name": slot["name"], "arguments": slot["arguments"]}}
+        for _, slot in sorted(tool_buf.items())      # 按 index 排序还原调用顺序
+    ]
+    return {"content": content_buf, "reasoning": reasoning_buf, "usage": usage,
+            "tool_calls": tool_calls}
 
 
 def _print_usage(usage):
@@ -196,6 +228,37 @@ def _print_usage(usage):
 
 # ==================== 自测(直接运行本文件才会执行) ====================
 if __name__ == "__main__":
+    # ---- 离线自测:假 chunk 驱动 _stream_consume,验证 tool_calls 分片累积(不联网) ----
+    class _D:      # 假 delta
+        def __init__(self, content=None, tool_calls=None):
+            self.content = content
+            self.tool_calls = tool_calls
+            self.reasoning_content = None
+    class _TC:     # 假工具调用分片
+        def __init__(self, index, id=None, name=None, arguments=None):
+            self.index = index
+            self.id = id
+            self.function = type("F", (), {"name": name, "arguments": arguments})()
+    class _Chunk:
+        def __init__(self, delta=None, usage=None):
+            self.choices = [] if delta is None else [type("C", (), {"delta": delta})]
+            self.usage = usage
+
+    def _gen():
+        yield _Chunk(_D(tool_calls=[_TC(0, id="c1", name="search_memory", arguments="")]))
+        yield _Chunk(_D(tool_calls=[_TC(0, arguments='{"query"')]))     # 参数第1段
+        yield _Chunk(_D(tool_calls=[_TC(0, arguments=': "测试"}')]))    # 参数第2段
+        yield _Chunk(_D(content="答案是 42"))                            # 与工具同轮的文本
+        yield _Chunk(usage=None)                                         # 收尾
+
+    r = _stream_consume(_gen(), show_thinking=False)
+    assert r["tool_calls"][0]["id"] == "c1"
+    assert r["tool_calls"][0]["function"]["name"] == "search_memory"
+    assert r["tool_calls"][0]["function"]["arguments"] == '{"query": "测试"}'
+    assert r["content"] == "答案是 42"
+    print("[离线自测] tool_calls 分片累积: OK")
+
+    # ---- 在线自测(需要 .env;没配的厂商自动跳过) ----
     load_dotenv()
     if os.environ.get('DEEPSEEK_API_KEY'):
         result = Deepseek_Core("用一句话介绍你自己", show_thinking=True)
