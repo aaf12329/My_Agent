@@ -34,11 +34,11 @@ root.configure(bg=BG)
 root.resizable(False, False)
 
 # ==================== 消息区:Canvas + 内部 Frame,气泡可滚动 ====================
+# 打包顺序刻意安排:先底部输入条(BOTTOM 占满宽度) → 右滚动条 → 画布吃剩余空间
+# (pack 按顺序分地:若画布先以 LEFT+expand 打包会吃光整个高度,底部条被挤成 0 高度
+#  ——这就是"输入框和发送按钮消失"的 bug,修复方式是把它提到最前面打包)
 scrollbar = tk.Scrollbar(root, bg=BG)
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(10, 5), padx=(0, 2))
-
 canvas = tk.Canvas(root, bg=CANVAS, highlightthickness=0, yscrollcommand=scrollbar.set)
-canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=(10, 5))
 scrollbar.configure(command=canvas.yview)
 
 inner = tk.Frame(canvas, bg=CANVAS)
@@ -86,8 +86,12 @@ def _remove_row(row):
 
 # ==================== 底部输入区(沿用旧版布局) ====================
 bottom_frame = tk.Frame(root, bg=BG, height=100)
-bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(5, 10))
+bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(5, 10))   # ← 必须先于画布打包
 bottom_frame.pack_propagate(False)
+
+# 底部条落位之后,滚动条和画布才能打包(吃剩余空间)
+scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=(10, 5), padx=(0, 2))
+canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=(10, 5))
 
 agent_var = tk.BooleanVar(value=False)   # Agent 模式开关:勾上=模型自主调工具(后台线程禁 input,审批强制 auto)
 agent_check = tk.Checkbutton(bottom_frame, text="Agent", variable=agent_var,
